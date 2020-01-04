@@ -644,8 +644,6 @@ train_set <- train_set %>%
   semi_join(test_set, by = "t_country") %>%
   semi_join(test_set, by = "t_industry") %>%
   semi_join(test_set, by = "thor")
-train_set <- droplevels(train_set) # drop unused levels
-test_set <- droplevels(test_set)   # drop unused levels
 ```
 
 The train and test set now contain `r nrow(train_set)` and `r nrow(test_set)` rows, respectively.
@@ -656,10 +654,6 @@ We will start with predicting the target country by means of different machine l
 ```{r}
 test_set_tc <- test_set %>% mutate(t_industry = as.numeric(t_industry))
 train_set_tc <- train_set %>% mutate(t_industry = as.numeric(t_industry))
-```
-```{r include=FALSE}
-droplevels(test_set_tc)
-droplevels(train_set_tc)
 ```
 
 ### 3.1.1 Probability
@@ -783,10 +777,6 @@ In this section we will predict the target industry by means of different machin
 ```{r}
 test_set_ti <- test_set %>% mutate(t_country = as.numeric(t_country))
 train_set_ti <- train_set %>% mutate(t_country = as.numeric(t_country))
-```
-```{r include=FALSE}
-droplevels(test_set_tc)
-droplevels(train_set_tc)
 ```
 
 ### 3.2.1 Probability
