@@ -1,0 +1,1029 @@
+---
+title: "Aerial Bombardments on Europe During World War II"
+author: "Simon Cox"
+date: "January 4, 2020"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+if(!require(sf)) install.packages("sf", repos = "http://cran.us.r-project.org")
+if(!require(sp)) install.packages("sp", repos = "http://cran.us.r-project.org")
+if(!require(plyr)) install.packages("plyr", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(rpart)) install.packages("rpart", repos = "http://cran.us.r-project.org")
+if(!require(Amelia)) install.packages("Amelia", repos = "http://cran.us.r-project.org")
+if(!require(visdat)) install.packages("visdat", repos = "http://cran.us.r-project.org")
+if(!require(tibble)) install.packages("tibble", repos = "http://cran.us.r-project.org")
+if(!require(stringr)) install.packages("stringr", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(ggthemes)) install.packages("ggthemes", repos = "http://cran.us.r-project.org")
+if(!require(ggridges)) install.packages("ggridges", repos = "http://cran.us.r-project.org")
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(rworldmap)) install.packages("rworldmap", repos = "http://cran.us.r-project.org")
+```
+
+# Before we start
+Thank you for taking time to read this report. In this report we will analyse a dataset containing Allied aerial bombardments on Europe during the second World War. The main reason why I have chosen this dataset is that I have lived my first 17 years in a small village in The Netherlands, named Groesbeek. On the 17th of September 1944 this small village witnessed one of the largest Airborne operations of Allied forces in history, code name Operation Market Garden. The objective was to take control of the main bridges crossing the Waal and the Rhine and to create an Allied invasion route into northern Germany. However, the Germans forces were stronger than expected and stopped the advancing Allies at the Rhine bridge, just before the city of Arnhem. Although operation Market Garden was considered failed, it marked the start of the liberation of The Netherlands, which was finally liberated on the 5th of May 1945.\newline
+I started writing this report 75 years after Operation Market Garden in 2019. And since I started writing just before New Year, by the time I am done it will be 2020, the year that we will celebrate 75 years of freedom in The Netherlands. This is the reason I want to explore this dataset and dig deeper into the history that took place 75 years ago. Hopefully you will enjoy reading this report!
+
+# 0. Introduction
+This report is part of the **Choose Your Own!** project of the **edx Data Science Professional Programm Capstone**. For this project I will assess a dataset of my choosing and deliver a report of this assessment in .pdf and .Rmd format together with the complete script in .R format.
+I have chosen to assess the *"Aerial Bombing Operations in World War II"* dataset from www.kaggle.com. It was developed by Lt Col Jenns Robertson of the US Air Force and consists of digitized paper mission reports from World War II.
+
+The goal of this assessment is to apply the data science skills I learned during this course. Ultimately, I will apply different machine learning algorithms to predict the target country or the target industry for bombardment missions. But first, we dive into the dataset and wrangle the data when necessary. Thereafter, we will explore the dataset by plotting the data and hopefully finding some relations. Next, we will have to adjust the dataset a bit to make it useable for different machine learning algorithms. Finally, we will create two models, one to predict the target country and one to predict the target industry, and we will assess the accuracy of both models.
+
+The report is structured as follows:
+
+1. Data Wrangling
+2. Data Analysis
+3. Machine Learning
+4. Results
+5. Conclusions
+\pagebreak
+
+# 1. Data Wrangling
+In this chapter we will investigate the *"Aerial Bombing Operations in World War II"* dataset and apply data wrangling techniques to modify, clean and remove data.
+
+## Loading the data
+We start with loading the "data.csv" dataset. The data.csv file is located in the same folder as the .Rmd and .R files.
+
+```{r}
+path <- "data.csv"
+dat <- read.csv(path, header = TRUE, sep = ",", na.strings=c("","NA"))
+```
+
+The dataset is quite large, as we can show by plotting its dimensions.
+
+```{r}
+dim(dat)
+```
+
+To get an idea of the type of information sotred in the dataset we will visualize a small part (500 rows and 20 clumns) of the dataset.
+
+```{r fig.height=4.5}
+visdat::vis_dat(dat[1:500,1:20])
+```
+
+There are a lot of `NA`'s in this dataset, which means that we have to wrangle it quite a bit.
+
+\pagebreak
+## Wrangling
+We start by removing columns that contain more than 50% `NA`'s, since these columns are not very informative. Later you will see that we require the target latitude and longitude to locate the bombardments. Therefore, we will remove all rows with missing a target longitude or latitude. We will store the filtered dataset in `ops`. 
+
+``` {r}
+ops <- dat[, colMeans(is.na(dat)) < 0.5]
+ops <- ops %>% filter(!is.na(Target.Longitude) & !is.na(Target.Latitude))
+dim(ops)
+```
+
+With these commands we removed a total of `r ncol(dat)-ncol(ops)` columns and `r nrow(dat)-nrow(ops)` rows.\newline
+
+Now, let's dive into the data. One of the first things I noticed was that Great Britain is listed as a target country 16 times!
+
+```{r}
+ops %>% filter(Target.Country == "GREAT BRITAIN") %>% nrow()
+```
+
+How did that happen and who of the Allied forces is bombing Great Britain? Let us plot these bombardments on a map of Europe based on their latitude and longitude.
+
+```{r fig.height=4}
+min_lon <- -20   # boundary values for map of Europe
+max_lon <- 30
+min_lat <- 35
+max_lat <- 60
+# make plot of Europe to be used as underlay
+eu_map <- ggplot() +  borders("world", colour = "gray85", fill = "gray70") +
+  coord_sf(xlim = c(min_lon, max_lon), ylim = c(min_lat, max_lat)) +
+  labs(x="LON", y="LAT")
+# filter ops in Great Britain
+ops_GB <- ops %>% filter(Target.Country == "GREAT BRITAIN")
+# plot on map
+eu_map + geom_point(aes(x=Target.Longitude, y=Target.Latitude),
+             data = ops_GB, fill = "deepskyblue3", shape=21) +
+  theme(legend.title=element_text(size=10), legend.text = element_text(size=10))
+```
+
+According to this plot these events happened in Germany and Romania. Is this true or did they mess up the latitude and longitude? Let us look at the corresponding target cities.
+
+```{r}
+knitr::kable(sort(unique(ops_GB$Target.City)), col.names = "Target city")
+```
+
+All cities are German except for Arad, which is a city in Romania. So, this means that the target country is listed wrong. Did this happen with more entries? We will check this by plotting the bombardments on The Netherlands, Italy and Poland.
+
+```{r echo=FALSE, fig.height=4}
+ops_3c <- ops %>% filter(Target.Country %in% c("HOLLAND OR NETHERLANDS", "ITALY", "POLAND"))
+
+Bombings_3c <- eu_map +
+  geom_point(aes(x=Target.Longitude, y=Target.Latitude, color = Target.Country, shape = Target.Country),
+             data = ops_3c, fill = "deepskyblue3", alpha = 0.5) +
+  theme(legend.title=element_blank(), legend.text = element_text(size=10),
+        legend.position = "top")
+Bombings_3c
+```
+
+Again, we see wrongly listed bombardments. Luckily, we can solve this. We will use a map of the world and create a function, called `find_country`, which takes the `Target.Longitude` and `Target.Latitude` as input and finds the correct country based on the coordinates.
+
+```{r Finding the right countries}
+worl_map = getMap(resolution = "high") # get the world map
+# this takes some time
+find_country <- function(coordinate){  # function to find the correct country
+  spatial_point = SpatialPoints(coordinate, proj4string = CRS(proj4string(worl_map)))
+  index = over(spatial_point, worl_map)
+  index$ADMIN}
+# run the function for all entries in the ops dataset
+ops <- ops %>% mutate(temp = toupper(find_country(data.frame(Target.Longitude,
+                                                             Target.Latitude))))
+# replace target country with correct one unless function returns NA (op was in sea)
+ops <- ops %>% filter(!is.na(temp)) %>% mutate(Target.Country = temp)
+```
+
+To check if our function worked, we will again count the number of times Great Britain appears in the target countries column.
+
+```{r}
+ops %>% filter(Target.Country == "GREAT BRITAIN") %>% nrow()
+```
+
+Great! So, for Great Britain it worked, let us again plot the bombardments on The Netherlands, Italy and Poland.
+
+```{r echo=FALSE, fig.height=4}
+ops_3c <- ops %>% filter(Target.Country %in% c("NETHERLANDS", "ITALY", "POLAND"))
+
+Bombings_3c <- eu_map +
+  geom_point(aes(x=Target.Longitude, y=Target.Latitude, color = Target.Country, shape = Target.Country),
+             data = ops_3c, fill = "deepskyblue3", alpha = 0.5) +
+  theme(legend.title=element_blank(), legend.text = element_text(size=10),
+        legend.position = "top")
+Bombings_3c
+```
+
+It looks like the countries are reassigned correctly.
+
+Now, since we are only interested in bombardments on Europe, we remove the entries with target countries outside Europe. We will also rename some country names.
+
+```{r}
+# Select only countries within Europe and North-Africa
+ops <- ops %>% filter(between(Target.Longitude, min_lon, max_lon) &
+                        between(Target.Latitude, min_lat, max_lat))
+ops <- ops %>% filter(!Target.Country %in% c("ALGERIA", "TUNISIA")) # del N-African count
+ops$Target.Country[ops$Target.Country == "NETHERLANDS"] <- "THE NETHERLANDS"     # rename
+ops$Target.Country[ops$Target.Country == "CZECH REPUBLIC"] <- "CZECHOSLOVAKIA"   # rename
+ops$Target.Country[ops$Target.Country == "SLOVAKIA"] <- "CZECHOSLOVAKIA"         # rename
+ops$Target.Country <- as_factor(ops$Target.Country) # turn back to factors
+ops <- ops %>% select(-temp) %>% droplevels()       # remove temp and drop unused levels
+```
+
+\pagebreak
+## Long names
+As you might already have noticed, the data contains some long names and descriptions. We will reduce them as much as possible starting with the column names.
+
+```{r}
+# Rename columns
+colnames(ops) <- c("mission_id", "date", "thor", "country",
+                   "air_force", "ac_series", "t_id", "t_country",
+                   "t_city", "t_type", "t_industry", "t_priority",
+                   "t_lat", "t_lon", "altitude", "attacking_ac",
+                   "he_weight_tons", "total_weight_tons", "source_id")
+```
+
+We will also reduce these following extremely long target industry names:
+
+```{r echo=FALSE}
+# plot long target industy descriptions
+knitr::kable(levels(ops$t_industry)[which(nchar(levels(ops$t_industry)) > 50)],
+             col.names = "Target industry")
+```
+
+To:
+
+```{r echo=FALSE}
+# Rename target industries
+ops$t_industry <- gsub('\"', "", ops$t_industry)   # remove backslash
+ops$t_industry <- gsub(' - ', " ", ops$t_industry) # remove -
+ops$t_industry <- gsub('-', " ", ops$t_industry)   # remove -
+ops$t_industry <- gsub('  ', " ", ops$t_industry)  # remove double space
+ops$t_industry <- as_factor(gsub(' $', "", ops$t_industry)) # remove end space
+# rename long industry descritions
+ops <- transform(ops, t_industry=revalue(t_industry, c("IRON AND STEEL PRODUCTION FACILITIES, BLAST FURNACES, BOILER SHOPS, FORGES, FOUNDRIES, STEEL WORKS, ROLLING MILLS" =
+                                               "IRON AND STEEL PRODUCTION FACILITIES", 
+                                               "MANUFACTURING INSTALLATIONS (NOT SPECIFICALLY IDENTIFIED BELOW FROM CLASS 11 THROUGH 59)" =
+                                                 "MANUFACTURING INSTALLATIONS", 
+                                               "PUBLIC UTILITIES ELECTRIC LIGHT AND POWER COMPANIES, GAS COMPANIES, TELEPHONE COMPANIES, WATER COMPANIES." =
+                                                 "PUBLIC UTILITIES", 
+                                               "TRANSPORTATION FACILITIES (NOT SPECIFICALLY IDENTIFIED BELOW)" =
+                                                 "TRANSPORTATION FACILITIES", 
+                                               "TACTICAL TARGETS: (UNIDENTIFIED OR NOT LISTED BELOW)" =
+                                                 "TACTICAL TARGETS",
+                                               "RR INSTALLATIONS, TRACKS, MARSHALLING YARDS, AND STATIONS" =
+                                            "RR INST., TRACKS, M. YARDS, AND STATIONS")))
+# plot renamed descriptions
+knitr::kable(sort(levels(ops$t_industry)[levels(ops$t_industry) %in% c("IRON AND STEEL PRODUCTION FACILITIES",
+                                                                       "MANUFACTURING INSTALLATIONS",
+                                                                       "PUBLIC UTILITIES",
+                                                                       "TACTICAL TARGETS",
+                                                                       "TRANSPORTATION FACILITIES",
+                                                                       "RR INST., TRACKS, M. YARDS, AND STATIONS")]), col.names = "Target industry")
+```
+
+Next, we will transform the date column to class date and transform the altitude into understandable units, which are meters and not feet.
+
+```{r}
+# tranform dates from factor to date
+ops$date <- as.Date(mdy(ops$date))
+# transform altitude to meters.
+ops$altitude <- ops$altitude * 100 * 0.3048
+```
+
+Furthermore, the aircraft series column contains different versions of the same aircraft type. We will combine them.
+
+```{r}
+ops$ac_series <- fct_collapse(ops$ac_series,
+                              B17 = c('0B17', 'B17', 'GB17', 'OB17', 'SB17'), 
+                              B24 = c('0B24', 'B24', 'GB24', 'OB24', 'SB24'))
+``` 
+
+Now, let us visualize the resulting dataset by plotting a missing values map.
+
+```{r}
+Amelia::missmap(ops, main="Missing values map")
+```
+
+Still, there are columns containing many `NA`'s. I want to get rid of them before we continue. Therefore, we replace the `NA`'s with `UNKNOWN` for character attributes and `-1` for numerical attributes. This makes it easy to filter them later.
+
+```{r echo=FALSE}
+ops$thor <- factor(ops$thor, levels=c(levels(ops$thor), "UNKNOWN"))
+ops$thor[is.na(ops$thor)] <- "UNKNOWN"
+ops$country <- factor(ops$country, levels=c(levels(ops$country), "UNKNOWN"))
+ops$country[is.na(ops$country)] <- "UNKNOWN"
+ops$air_force <- factor(ops$air_force, levels=c(levels(ops$air_force), "UNKNOWN"))
+ops$air_force[is.na(ops$air_force)] <- "UNKNOWN"
+ops$ac_series <- factor(ops$ac_series, levels=c(levels(ops$ac_series), "UNKNOWN"))
+ops$ac_series[is.na(ops$ac_series)] <- "UNKNOWN"
+ops$t_id <- as.integer(ops$t_id)
+ops$t_id[is.na(ops$t_id)] <- -1
+ops <- ops %>% filter(!is.na(t_city))
+ops$t_type[is.na(ops$t_type)] <- "UNIDENTIFIED TARGET"
+ops$t_industry[is.na(ops$t_industry)] <- "UNIDENTIFIED TARGETS"
+ops$t_priority <- factor(ops$t_priority, levels=c(levels(ops$t_priority), "UNKNOWN"))
+ops$t_priority[is.na(ops$t_priority)] <- "UNKNOWN"
+ops$altitude[is.na(ops$altitude)] <- -1
+ops$attacking_ac[is.na(ops$attacking_ac)] <- -1
+ops$attacking_ac <- as.integer(ops$attacking_ac)
+ops$he_weight_tons[is.na(ops$he_weight_tons)] <- -1
+ops$total_weight_tons[is.na(ops$total_weight_tons)] <- -1
+ops$source_id[is.na(ops$source_id)] <- -1
+ops$source_id <- as.integer(ops$source_id)
+```
+
+The resulting `ops` dataset has dimensions `r dim(ops)` and is ready to be analysed.
+\pagebreak
+
+# 2. Data Analysis
+In this chapter we will investigate relations between the different attributes in the `ops` dataset. Because our ultimate goal is to predict the target country and the target industry, we will focus on these two attributes. \newline
+To not get lost in the search for all possible kinds of relations, I established the following research questions.
+
+1. Is there a relation between the target country and...
+    + ... the number of missions?
+    + ... the total weight of bombs dropped?
+    + ... the aircraft type?
+2. Is there a relation between the target industry and...
+    + ... the number of missions?
+    + ... the date?
+    + ... the target priority
+    + ... the total weight of the bombs?
+    + ... the altitude?
+3. Is there a relation between the target country and the target industry?
+
+## 2.1 Relation between the target country and...
+We start with the relations between the target countries and other attributes. First things first, how many countries have been targeted by the Allied forces?
+
+```{r}
+length(unique(ops$t_country))
+```
+
+### ... the number of missions
+And which of these `r length(unique(ops$t_country))` countries are targeted the most?
+
+```{r echo=FALSE, fig.height=3.5}
+# Select 10 most bombed countries in EU and show bombings per year
+top_10_countries <- ops %>% group_by(t_country) %>%
+  summarize(val = n()) %>% arrange(desc(val)) %>% top_n(10, val)
+
+# which countries have been bombed the most?
+top_10_countries %>%
+  ggplot(aes(x=reorder(t_country, val), y=val, fill=t_country)) +
+  geom_bar(stat="identity") +
+  labs(title="Total number of missions during the war per country",
+       x="Target country", y = "Total number of missions") +
+  coord_flip() +
+  theme(legend.position="none", plot.title = element_text(size=12))
+```
+
+Not surprisingly, Germany is the most targeted country, followed by Italy and France. The corresponding proportions are show in the table below. 
+
+```{r echo=FALSE}
+sub_country <- ops %>% group_by(t_country) %>% summarise(prop = n()/nrow(ops)) %>% top_n(10,prop)
+knitr::kable(arrange(sub_country,-sub_country$prop), col.names=c("Target country", "Proportion"), digits = 2)
+```
+
+Is this distribution more or less the same during the war? Let us make the same bar plot but then stratified for the years 1940 up to 1945.
+
+```{r echo=FALSE, fig.height=5}
+# how is this distributed over the year?
+ops %>% filter(ops$t_country %in% top_10_countries$t_country) %>%
+  mutate(year = year(date)) %>% filter(!year==1939) %>% group_by(t_country, year) %>% summarize(val = n()) %>%
+  ggplot(aes(x=reorder(t_country, val), y=val, fill=t_country)) +
+  geom_bar(stat="identity") +
+  scale_y_continuous(breaks = c(0,10000,20000)) +
+  labs(title="Total number of missions per year per country",
+       x="Target country", y = "Total number of missions") +
+  coord_flip() +
+  theme(legend.position="none", plot.title = element_text(size=12)) +
+  facet_wrap(~year)
+```
+
+From these bar plots we get an overall idea of how the war was fought. We can see that from 1943 up to 1945 Italy was heavily bombarded This makes sense when we look at the invasion of Italy. In September 1943 the Allied forces landed on the coasts of Italy on three locations around Salerno. The codenames of these operations were: Operation Avalanche, Operation Baytown and Operation Slapstick. The Allied campaign in Italy lasted until May 1945 with the surrender of the German forces in Italy.
+Similarly, we see that France is bombed heavily in 1944, which corresponds to the Allied campaign in France. In June 1944 the Allied forces landed on the coasts of Normandy, France, during Operation Overlord. Here it only took until the end of August 1944 to liberate Paris and most of France.\newline
+In addition to these large campaigns, we notice that the Allied bombers assisted the Russian forces through executing bombardments on Hungary, Poland, Czechoslovakia and Romania.
+
+Concluding, there is a relation between the target country and the number of missions. Especially when we stratify the data per year. Then we see that Germany was target country number one, except for 1943 when Italy had this dubious honor. Moreover, in 1944 the chance significantly increased that France was the target.
+
+### ... the total weight of bombs dropped
+Next, we will investigate the relation between the target country and the total weight of bombs dropped. Let us start with plotting the total amount of bombs dropped on the top 10 most hit countries by weight of bombs.
+
+```{r echo=FALSE, fig.height=3 }
+# Which country has received the most amount of bombs in tons
+top_10_countries <- ops %>% group_by(t_country) %>%
+  summarize(tons=sum(total_weight_tons)) %>% arrange(desc(tons)) %>%
+  top_n(10, tons)
+
+top_10_countries %>%
+  ggplot(aes(x=reorder(t_country, tons), y=tons, fill=t_country)) +
+  geom_bar(stat="identity") +
+  labs(title="Total weight of bombs dropped per country",
+       x = "Target country", y = "Total weight of bombs in tons") +
+  coord_flip() +
+  scale_y_continuous(labels = function(x) format(x, scientific = TRUE)) +
+  theme(legend.position="none", plot.title = element_text(size=12))
+
+top_10_countries <- top_10_countries %>% pull(t_country)
+```
+
+Again, Germany comes out on top with a devastating amount of nearly two million tons of bombs dropped. Ofcourse, this makes sense regarding the number of bombardment missions on Germany. But how about the average weight of bombs dropped per mission?
+
+```{r echo=FALSE, fig.height=3 }
+ops %>% filter(ops$t_country %in% top_10_countries) %>%
+  filter(total_weight_tons >= 1) %>%
+
+  ggplot(aes(x=total_weight_tons, y=reorder(t_country, total_weight_tons), fill = t_country)) +
+  geom_density_ridges(bandwidth = 0.05, alpha=0.5) +
+  scale_x_log10(breaks=c(0.1,1,10,100,1000)) +
+  labs(title="Distribution of total weight of bombs\n per mission for different countries",
+       x="Total weight of bombs", y="Target country") +
+  theme(legend.position="none", plot.title = element_text(hjust = 0.5, size=12))
+```
+
+Well, this is unexpected, at least for me. It turns out that East European countries, although they are hit less often, are bombed more heavily on average. The exact opposite applies to The Netherlands and Belgium, whom are targeted more often but not very heavily. At least not by the Allied forces. The German forces on the other hand, completely destroyed several Dutch cities, among which Rotterdam, Eindhoven, and Nijmegen.
+
+### ... the aircraft type
+For our next question we will investigate the relation between the target country and the aircraft type? Do the Allied forces have a preferred aircraft for a country? Let us plot the top 10 most used aircraft types against the top 4 most bombarded countries.  
+
+```{r echo=FALSE}
+# Aircraft series throughout the years
+# get top 10 aircraft series (n10_acs) and top four countries (n4_country)
+n10_acs <- ops %>% group_by(ac_series) %>% summarize(val = n()) %>%
+  arrange(desc(val)) %>% top_n(10, val)  %>% pull(ac_series)
+n4_country <- ops %>% group_by(t_country) %>% summarize(val = n()) %>%
+  arrange(desc(val)) %>% top_n(4, val) %>% pull(t_country)
+
+# filter and calculate number of times ac_series was used in different countries
+ops %>% filter(ac_series %in% n10_acs & t_country %in% n4_country) %>%
+  group_by(ac_series, t_country) %>% summarize(val = n()) %>%
+  # create plot
+  ggplot(aes(x=reorder(ac_series, val), y=val, fill=ac_series)) +
+  geom_bar(stat="identity") +
+  labs(title="Number of missions per aircraft serie per country",
+       x = "Aircraft series", y = "Total number of missions") +
+  coord_flip() +
+  theme(legend.position = 'none', plot.title = element_text(size=12)) +
+  facet_wrap(~t_country)
+```
+
+It seems that there are preferred aircraft types per country. For instance, Austria had no need to worry when any other plane than a B17 or B24 was taking off. Germany on the other hand, had reason to worry with almost every plane type. And most remarkably, the A20 and B25 bombers seem to have opoerated almost only in Italy.
+
+\pagebreak
+## 2.2 Relation between the target industry and...
+In this section we will be searching for relations between the target industry and other attributes. But first we determine the number of different target industries.
+
+```{r}
+length(unique(ops$t_industry))
+```
+
+### ... the number of missions
+Which of these `r length(unique(ops$t_industry))` target industries were hit the most?
+
+```{r echo=FALSE, fig.height=3.5}
+n10_t_industry <- ops %>% filter(!t_industry == "UNIDENTIFIED TARGETS") %>%
+  group_by(t_industry) %>% summarize(val=n()) %>% arrange(desc(val)) %>%
+  top_n(10, val) %>% pull(t_industry)
+
+ops %>% filter(ops$t_industry %in% n10_t_industry) %>%
+  ggplot(aes(reorder(stringr::str_wrap(t_industry,25),t_industry,function(x) length(x)), fill = t_industry)) +
+  geom_bar() +
+  coord_flip() +
+  labs(title="Total number of missions per target industry",
+       x="Target industry", y="Total number of missions") +
+  theme(legend.position = 'none', plot.title = element_text(size=12))
+```
+
+This bar plot shows that `RR installations, tracks, etc.` and `Air fields` are targeted the most. Together they are good for over 30% of the bombardments.
+
+```{r echo=FALSE}
+sub_industry <- ops %>% group_by(t_industry) %>% filter(!t_industry == "UNIDENTIFIED TARGETS") %>%
+  summarise(prop = n()/nrow(ops)) %>% top_n(10,prop)
+knitr::kable(arrange(sub_industry,-sub_industry$prop), col.names=c("Target industry", "Proportion"), digits = 2)
+```
+
+### ... the date
+DI can imagine that during the war targets change. Is this also visible in the data? Let us plot the distribution of bombardments on the top 10 target industries over the course of war.
+
+```{r echo=FALSE, fig.height=3.5}
+ops %>% filter(ops$t_industry %in% n10_t_industry) %>%
+  # plot
+  ggplot(aes(x = date, stringr::str_wrap(t_industry,25), fill = t_industry)) +
+  geom_density_ridges(bandwidth = 20, alpha=0.5) +
+  theme(legend.position = 'none', plot.title = element_text(size=12)) +
+  labs(title="Distribution of attacks on different industries during the war",
+       x="Date", y="Target industry")
+```
+
+As shown in this plot the target type change over time. In the early years mainly ports and air fields are targeted. In the later stages of the war other industries had priority.
+
+### ... the target priority
+Talking about priority, is there a relation between the target industry and target priority. Below we plotted the top 10 target industries again, but this time against to the target priority.
+
+```{r echo=FALSE, fig.height=4}
+ops %>% filter(ops$t_industry %in% n10_t_industry) %>%
+  #plot
+  ggplot(aes(t_priority, reorder(stringr::str_wrap(t_industry, 25),t_industry,function(x) length(x)),
+             color = t_industry)) +
+  geom_jitter(alpha=0.3, size=0.1) +
+  labs(title="Jitter plot for different priority - industry combinations",
+       x="Target priority", y="Target industry") +
+  theme(legend.position = 'none', plot.title = element_text(size=12))
+```
+
+From this plot I cannot instantly find a relation between the two attributes, besides that most targets are priority 1. Furthermore, targets with a value higher than 4 are very uncommon.
+
+### ... the total weight of the bombs
+Hopefully there is a more distinct relation to be witnessed  between the target industry and the total weight of the bombs. Let us have a look.
+
+```{r echo=FALSE, fig.height=3.5}
+# breaks for log scale plot
+breaks <- 10^(-10:10)
+minor_breaks <- rep(1:9, 21)*(10^rep(-10:10, each=9))
+ops %>% filter(t_industry %in% n10_t_industry, total_weight_tons > 0) %>%
+  # plot
+  ggplot(aes(stringr::str_wrap(t_industry, 20), total_weight_tons, color = t_industry)) +
+  geom_jitter(alpha=0.2) +
+  geom_violin(trim=FALSE, alpha=0.5) +
+  scale_y_log10(breaks = breaks, minor_breaks = minor_breaks) +
+  labs(title="Distribution of the total weight of bombardments for different industries",
+       x="Target industry", y="Total weight of bombs") +
+  theme(axis.text.x = element_text(angle =45, hjust=1), legend.position = 'none',
+        plot.title = element_text(size=12))
+```
+
+Again, the plots look very alike. However, there are some things to notice. The distribution for `Ports and harbors` and `oSynthetic oil refineries` are the two extreme variants and for several target industries almost never more than 100 tons of bombs were used.
+
+### ... the altitude
+Perhaps the altitude of the aircrafts is a better indicator for the target type. Let us find out.
+
+```{r echo=FALSE, fig.height=3.2}
+ops %>% filter(ops$t_industry %in% n10_t_industry) %>%
+  filter(altitude > 0) %>% group_by(t_industry) %>% mutate(avg_alt = mean(altitude)) %>%
+  # plot
+  ggplot(aes(x=reorder(stringr::str_wrap(t_industry,25), altitude, FUN=median), y=altitude)) +
+  geom_boxplot(aes(fill = t_industry, alpha=0.5)) +
+  theme(legend.position = 'none', plot.title = element_text(hjust=0.5,size=12)) +
+  labs(title="Distribution of the mission altitude for \ndifferent target industries",
+       x="Target industry", y="Altitude in meters") +
+  coord_flip()
+```
+
+There is a pattern here. It seems that smaller targets, in general, require a lower altitude than larger targets.
+
+## 2.3 Is there a relation between the target country and target industry?
+Finally, we will assess the relation between the top 10 target countries and the top 10 target industries.
+
+```{r echo=FALSE, fig.height=4}
+ops %>% filter(t_industry %in% n10_t_industry
+               & t_country %in% top_10_countries) %>%
+  ggplot(aes(reorder(t_country, t_country, function(x){-length(x)}),
+             stringr::str_wrap(reorder(t_industry,t_industry, FUN=length), 25),
+             color = t_country)) +
+  geom_jitter(alpha=0.3, size=0.1) +
+  labs(title="Jitter plot for different country - industry combinations",
+       x="Target country", y="Target industry") +
+  theme(axis.text.x = element_text(angle =45, hjust=1),
+        legend.position = 'none', plot.title = element_text(size = 12))
+```
+
+In this plot the most targeted countries are presented from left to right and the most targeted industries from bottom to top. In works as a table with the density of the points indicating the chance of being targeted for each target country - target industry combination.\newline
+With this we end the data analysis part and continue with the machine learning part.
+
+\pagebreak
+# 3. Machine Learning
+In this chapter we will apply different machine learning algorithms to predict both the target country and the target industry. From the previous chapters we know that the target country and industry are categorical data. Therefore, we will use the following classification and clustering algorithms:
+
+1. Probability
+2. Logistic regression
+3. KNN
+4. Decision Trees
+5. Random Forests
+
+## Create subset
+The `ops` dataset is very large (`r dim(ops)`). Therefore, training the machine learning algorithms will be extremely computational demanding. To reduce the computational cost, we will make a subset of the `ops` dataset.
+
+First, we reduce the number of predictors. The target type for instance, contains about the same information as the target industry. Therefore, we will remove this column. Furthermore, we will remove the target latitude, longitude, and city, since they can directly be linked to the target country.
+
+```{r}
+sub_set <- select(ops, -t_type, -t_city, -t_lat, -t_lon)
+```
+
+Next, we will reduce the number of rows by including only the top 10 most bombarded countries and the top 20 most targeted industries.
+
+```{r}
+ # filter top 10 countries
+country_filter <- sub_set %>% group_by(t_country) %>%
+  summarise(prop = n()/nrow(sub_set)) %>% top_n(10,prop)
+# filter top 20 industries
+industry_filter <- sub_set %>% group_by(t_industry) %>%
+  filter(!t_industry == "UNIDENTIFIED TARGETS") %>%      
+  summarise(prop = n()/nrow(sub_set)) %>% top_n(20,prop)
+# create subset
+sub_set <- sub_set %>% filter(t_country %in% sub_country$t_country &
+                            t_industry %in% sub_industry$t_industry)
+```
+
+This reduces the number of rows to `r nrow(sub_set)`, a reduction of `r paste(round((1-nrow(sub_set)/nrow(ops))*100),"%",sep="")`. Still, this is too large for my laptop. If we put back the `NA`'s in the dataset we can see how many missing values we have and decide on which extra rows to remove.
+
+```{r echo=FALSE}
+sub_set$thor <- revalue(sub_set$thor, c("UNKNOWN"=NA))
+sub_set$country <- revalue(sub_set$country, c("UNKNOWN"=NA))
+sub_set$air_force <- revalue(sub_set$air_force, c("UNKNOWN"=NA))
+sub_set$ac_series <- revalue(sub_set$ac_series, c("UNKNOWN"=NA))
+sub_set$t_id[sub_set$t_id == -1] <- NA
+sub_set$t_priority <- revalue(sub_set$t_priority, c("UNKNOWN"=NA))
+sub_set$altitude[sub_set$altitude <= 0] <- NA
+sub_set$attacking_ac[sub_set$attacking_ac == -1] <- NA
+sub_set$he_weight_tons[sub_set$he_weight_tons == -1] <- NA
+sub_set$total_weight_tons[sub_set$total_weight_tons == -1] <- NA
+sub_set$source_id[sub_set$source_id == -1] <- NA
+```
+
+```{r}
+missmap(sub_set, main = "Missing values map")
+```
+
+We will remove all rows with `NA`'s and see how large the remaining dataset is.
+
+```{r}
+sub_set <- sub_set %>% filter(!is.na(attacking_ac)        # filter NA's
+                              & !is.na(altitude)
+                              & !is.na(total_weight_tons)
+                              & !is.na(he_weight_tons)
+                              & !is.na(thor)
+                              & !is.na(t_priority)
+                              & !is.na(air_force))
+dim(sub_set)
+```
+
+Still over 10,000 entries. Let us reduce the subset even further by randomly selecting 5,000 rows.
+
+```{r}
+sub_set <- sample_n(sub_set, 5000, replace=FALSE) # create random subset of 5000 samples
+sub_set <- droplevels(sub_set) # remove unused levels
+```
+
+Now the dataset is small enough for my laptop to train the knn and random forest algorithms within reasonable time.\newline
+Before we start training models we first create a train and test set.
+
+```{r}
+# transform all predictors which now are characters to integers
+sub_set$thor <- as.integer(sub_set$thor)
+sub_set$country <- as.integer(sub_set$country)
+sub_set$air_force <- as.integer(sub_set$air_force)
+sub_set$ac_series <- as.integer(sub_set$ac_series)
+sub_set$t_priority <- as.integer(sub_set$t_priority)
+# create test and training set (20/80)
+test_index <- createDataPartition(sub_set$t_country, times=1, p=0.2, list=FALSE)
+test_set <- sub_set[test_index,]
+train_set <- sub_set[-test_index,]
+```
+
+We also need to make sure the same type of entries are in both sets. We do this with the following code.
+
+```{r}
+# make sure the levels in the train and test set are the same
+test_set <- test_set %>%
+  semi_join(train_set, by = "ac_series") %>%
+  semi_join(train_set, by = "t_priority") %>%
+  semi_join(train_set, by = "t_country") %>%
+  semi_join(train_set, by = "t_industry")%>%
+  semi_join(train_set, by = "thor")
+train_set <- train_set %>%
+  semi_join(test_set, by = "ac_series") %>%
+  semi_join(test_set, by = "t_priority") %>%
+  semi_join(test_set, by = "t_country") %>%
+  semi_join(test_set, by = "t_industry") %>%
+  semi_join(test_set, by = "thor")
+train_set <- droplevels(train_set) # drop unused levels
+test_set <- droplevels(test_set)   # drop unused levels
+```
+
+The train and test set now contain `r nrow(train_set)` and `r nrow(test_set)` rows, respectively.
+
+## 3.1 Predicting the target country
+We will start with predicting the target country by means of different machine learning algorithms. We aim to predict the target country as accurate as possible. Since in this exercise the target industry is a predictor, we will change them from characters to integers. The modified sets are stored in a test and train set with suffix `_tc`, for target country.
+
+```{r}
+test_set_tc <- test_set %>% mutate(t_industry = as.numeric(t_industry))
+train_set_tc <- train_set %>% mutate(t_industry = as.numeric(t_industry))
+```
+```{r include=FALSE}
+droplevels(test_set_tc)
+droplevels(train_set_tc)
+```
+
+### 3.1.1 Probability
+In Chapter 2 we have seen that Germany is targeted about 50% of the time. However, this was based on the complete `ops` dataset. Let us see how the distribution is in the `sub_set`.
+
+```{r}
+prob <- sub_set %>% group_by(t_country) %>%
+  summarize(prob = n()/nrow(sub_set)) %>% arrange(-prob)
+knitr::kable(prob, col.names = c("Target country", "Probability"), digits=2)
+```
+
+It turns out that the probabilities have changed. A large amount of bombardments on Germany have been omitted when creating the `sub_set`. That much even that Italy now leads this chart. Somehow, the records of the bombardments on Germany were not complete and therefore are removed. This is fine, we can continue making predictions with the new probabilities.
+
+```{r}
+# predict target country by probability
+guessing <- sample(prob$t_country, size=nrow(test_set_tc),
+                   prob = prob$prob, replace=TRUE)
+# calculate accuracy and add to table
+summary_tc <- tibble(Method = "Target country by probability",
+                     Accuracy = mean(guessing == test_set_tc$t_country))
+knitr::kable(summary_tc, digits=2)
+```
+
+This turns out not to be a very good prediction model.
+
+### 3.1.2 Logistic regression
+Perhaps a logistic regression model can provide a better accuracy. In the following code we fit our model, use the model to make predictions and add the accuracy to the table.
+
+```{r}
+# fit glm model
+fit_glm <- train_set_tc %>%
+  mutate(t_country = as.numeric(t_country)) %>% # turn country to numeric
+  glm(t_country ~ ., data=.)
+# predict target country
+y_hat <- round(predict(fit_glm, test_set_tc))
+# add to table
+summary_tc <- add_row(summary_tc, Method = "Target country with glm",
+                      Accuracy = mean(y_hat == as.integer(test_set_tc$t_country)))
+knitr::kable(summary_tc, digits=2)
+```
+
+Fair enough, the accuracy increases with `r paste(round((summary_tc$Accuracy[2]-summary_tc$Accuracy[1])*100),"%",sep="")`. Although, this is still not very accurate. Hopefully, we can increase the accuracy with a more sophisticated model.
+
+### 3.1.2 K-Nearest Neighbors
+Let us try the knn algorithm and use cross validation to find the number of neighbors (`k`).
+
+```{r fig.height=4}
+train_knn <- train_set_tc %>%
+  train(t_country ~ .,
+        method="knn",
+        tuneGrid = data.frame(k = seq(1, 10, 1)),
+        data=.)
+ggplot(train_knn)
+```
+
+The optimal number of neighbors appears to be `r train_knn$bestTune$k`. Now we can use the trained model to predict the target countries.
+
+```{r}
+y_hat <- predict(train_knn, test_set_tc)
+summary_tc <- add_row(summary_tc, Method = "Target country with knn",
+                  Accuracy = confusionMatrix(y_hat, test_set_tc$t_country)$overall["Accuracy"])
+knitr::kable(summary_tc, digits=2)
+```
+
+Good! We see a significant increase in accuracy.
+
+### 3.1.3 Decision tree
+Now we will try a decision tree. Again we use cross validation to find the best fit, this time for the complexity parameter `cp`.
+
+```{r fig.height=4}
+train_rpart <- train_set_tc %>%
+  train(t_country ~ .,
+        method="rpart",
+        tuneGrid = data.frame(cp=seq(0.0,0.1,len=25)),
+        data = .)
+plot(train_rpart)
+```
+
+As we can see the best accuracy is reached with a complexity parameter of `r paste("cp =", train_rpart$bestTune$cp)`. Let us train the model and make predictions.
+
+```{r}
+y_hat <- predict(train_rpart, test_set_tc)
+summary_tc <- add_row(summary_tc, Method = "Target country with rpart",
+                  Accuracy = confusionMatrix(y_hat, test_set_tc$t_country)$overall["Accuracy"])
+knitr::kable(summary_tc, digits=2)
+```
+
+The accuracy for the desicion tree is `r paste(round(tail(summary_tc$Accuracy, n=1)*100),"%",sep="")`, which is quite accurate.
+
+### 3.1.4 Random forest
+Finally, we will train a random forest algorithm. Here we will use cross validation to determine the most optimal node size.
+
+```{r  fig.height=4}
+nodesize <- seq(1, 51, 10)
+acc <- sapply(nodesize, function(ns){
+  train(t_country ~ ., method = "rf", data = train_set_tc,
+               tuneGrid = data.frame(mtry = 2),
+               nodesize = ns)$results$Accuracy})
+qplot(nodesize, acc)
+```
+
+The optimal nodesize appears to be `r nodesize[which.max(acc)]`. Let us plug in that value and determine the accuracy.
+
+```{r}
+# train the model
+nodesize <- nodesize[which.max(acc)]
+train_rf <- train_set_tc %>% train(t_country ~ ., method="rf", data = .)
+# make predictions
+y_hat <- predict(train_rf, test_set_tc)
+summary_tc <- add_row(summary_tc, Method = "Target country with rf",
+                  Accuracy = confusionMatrix(y_hat, test_set_tc$t_country)$overall["Accuracy"])
+knitr::kable(summary_tc, digits=2)
+```
+
+As we can see the random forest model can really accurately (`r round(tail(summary_tc$Accuracy, n=1),2)`) predict the target country.
+
+\pagebreak
+## 3.2 Predicting the target industry
+In this section we will predict the target industry by means of different machine learning algorithms. The procedure is similar to the one we used with predicting the target industry. However, the difference is that the number of target industries is larger and the probability distribution is less distinct. Therefore, it might will harder to get an accurate prediction model. Since in this exercise the target country is a predictor, we will change them from characters to integers. The modified sets are stored in a test and train set with suffix `_ti`, for target industry
+
+```{r}
+test_set_ti <- test_set %>% mutate(t_country = as.numeric(t_country))
+train_set_ti <- train_set %>% mutate(t_country = as.numeric(t_country))
+```
+```{r include=FALSE}
+droplevels(test_set_tc)
+droplevels(train_set_tc)
+```
+
+### 3.2.1 Probability
+First we predict the target industry based on the probability distribution. Below this distribution is provided for the subset.
+
+```{r}
+prob <- sub_set %>% group_by(t_industry) %>%
+  summarize(prob = n()/nrow(sub_set)) %>% arrange(-prob)
+knitr::kable(prob, col.names = c("Target industry", "Probability"), digits=2)
+```
+
+We use this probability distribution to predict.
+
+```{r}
+guessing <- sample(prob$t_industry, size=nrow(test_set_ti),
+                   prob = prob$prob, replace=TRUE)
+summary_ti <- tibble(Method = "Target industry by probability",
+                  Accuracy = mean(guessing == test_set_ti$t_industry))
+knitr::kable(summary_ti, digits=2)
+```
+
+Again, the accuracy of the probability model is not that great.
+
+### 3.2.2 Logistic regression
+Let us try logistic regression.
+
+```{r}
+# fit glm model
+fit_glm <- train_set_ti %>%
+  mutate(t_industry = as.numeric(t_industry)) %>%
+  glm(t_industry ~ ., data=.)
+# predict target country
+y_hat <- round(predict(fit_glm, test_set_ti))
+summary_ti <- add_row(summary_ti, Method = "Target industry with glm",
+                  Accuracy = mean(y_hat == as.integer(test_set_ti$t_industry)))
+knitr::kable(summary_ti, digits=2)
+```
+
+Apparently this model performs similar to the probability model.
+
+### 3.2.2 K-Nearest Neighbors
+Hopefully, knn performs better.
+
+```{r fig.height=4}
+train_knn <- train_set_ti %>%
+  train(t_industry ~ .,
+        method="knn",
+        tuneGrid = data.frame(k = seq(1, 10, 1)),
+        data=.)
+ggplot(train_knn) # plot tuning parameter
+```
+```{r fig.height=4}
+y_hat <- predict(train_knn, test_set_ti)
+summary_ti <- add_row(summary_ti, Method = "Target industry with knn",
+                  Accuracy = confusionMatrix(y_hat, test_set_ti$t_industry)$overall["Accuracy"])
+knitr::kable(summary_ti, digits=2) # print table
+```
+
+We see a significant increase in accuracy, which is good.
+
+### 3.2.3 Decision tree
+Next up is the decision  tree.
+
+```{r}
+train_rpart <- train_set_ti %>%
+  train(t_industry ~ .,
+        method="rpart",
+        tuneGrid = data.frame(cp=seq(0.0,0.1,len=25)),
+        data = .)
+plot(train_rpart) # plot tuning parameter
+y_hat <- predict(train_rpart, test_set_ti)
+summary_ti <- add_row(summary_ti, Method = "Target industry with rpart",
+                  Accuracy = confusionMatrix(y_hat, test_set_ti$t_industry)$overall["Accuracy"])
+knitr::kable(summary_ti, digits=2) # print table
+```
+
+This algorithm performs about the same as the knn model.
+
+### 3.2.4 Random forest
+Finally, we will train a random forest model.
+
+```{r fig.height=4}
+# find the optimal nodesize
+nodesize <- seq(1, 51, 10)
+acc <- sapply(nodesize, function(ns){
+  train(t_industry ~ ., method = "rf", data = train_set_ti,
+               tuneGrid = data.frame(mtry = 2),
+               nodesize = ns)$results$Accuracy
+})
+qplot(nodesize, acc) # plot
+```
+
+```{r}
+# train the model
+nodesize <- nodesize[which.max(acc)]
+train_rf <- train_set_ti %>% train(t_industry ~ ., method="rf", data = .)
+# make predictions
+y_hat <- predict(train_rf, test_set_ti)
+summary_ti <- add_row(summary_ti, Method = "Target industry with rf",
+                  Accuracy = confusionMatrix(y_hat, test_set_ti$t_industry)$overall["Accuracy"])
+knitr::kable(summary_ti, digits=2)
+```
+
+Again a high accuracy is reached with the random forest algorithm.
+
+# 4. Results
+We applied different machine learning algorithms to predict the target country and target industry. The table below provides a summary of the accuracy per algorithm for both cases.
+
+```{r echo=FALSE}
+summary <- add_column(summary_tc, summary_ti$Accuracy)
+summary <- `colnames<-`(summary, c("Method", "Target city", "Target industry"))
+summary$Method[1:5] <- c("Acc. by probability", "Acc. by logistic regression", "Acc. by knn", "Acc. by decision tree", "Acc. by random forest")
+knitr::kable(summary, digits = 2)
+```
+
+This table shows that the performance of the different algorithms is more or less independent of the case it tries to predict. Therefore, we will only discuss the algorithms in general.
+The predictions from the probability and logistic regression are rather lousy. However, the calculation time is nihil. The knn algorithm on the other hand, provides better predictions, although, the calculation time was about 10 minutes. A significantly lower amount of time was required for the decision tree, which also performed rather well. But the best predictor is the random forest model. This model also has the highest computational time, about 15 minutes. 
+
+# 5. Conclusion
+In this report we analysed the *"Aerial Bombing Operations in World War II"* dataset. At first we had to wrangle the dataset since it contains many `NA`'s. Then we analysed the dataset and found several relations between the different attributes. Thereafter, we tried different machine learning algorithms in order to create a prediction model that could predict the target country or target industry. We used five different algorithms, i.e. probability, logistic regression, knn, decision tree, and random forest.
+In the end the random forest algorithm yielded the most accurate results. However, this accuracy comes at a high computational cost. Fitting the random forest model on a dataset of `r nrow(sub_set)` rows and `r ncol(sub_set)` columns takes about 15 minutes.
+
+Concerning future work, for now I will not continue working with this dataset. But I will continue working on other datasets which are more related to my field of expertise, which is structural engineering.
+
+## Concluding remark
+In the Extra chapter there are some additional photo's and plots for those who are interested. Additionally, On my github page you can find two .gif files, among which a .gif showing the bombardments in Europe throughout the war. The scripts to create these .gif's can be found in the .R script.
+
+Thank you for reading this report. I hope you liked it.
+Have a nice day!
+
+Kind regards,
+
+Simon Cox
+
+\pagebreak
+# Extra
+## E.1 Linking data with pictures 
+Out of curiosity I browsed the web for two images of B-17 bombers with information of their mission. I found two on https://en.wikipedia.org/wiki/Boeing_B-17_Flying_Fortress.
+
+![B-17F Flying Fortresses flying a bombing mission to Schweinfurt, Germany, on August 17 1943. Source: www.wikipedia.org](images\B-17F_formation_over_Schweinfurt,_Germany,_August_17,_1943.jpg)
+
+Can we find this bombing mission?
+
+```{r}
+ops %>% filter(date == "1943-08-17" &
+                 t_city == "SCHWEINFURT" &
+                 ac_series %in% c("GB17", "B17")) %>%
+  select(mission_id, date, ac_series, t_country, t_city, t_industry) %>%
+  head() %>% knitr::kable()
+```
+
+We found the 18 missions of B17 Flying Fortresses that flew to Schweinfurt that day! How about the mission from the next picture?
+
+![B-17F radar bombing through clouds over Bremen, Germany, on November 13  1943. Source: www.wikipedia.org](images/B-17F_Radar_Bombing_over_Germany_1943.jpg)
+
+```{r}
+ops %>% filter(date == "1943-11-13" &
+                 t_city == "BREMEN" &
+                 ac_series %in% c("GB17", "B17")) %>%
+  select(mission_id, date, ac_series, t_country, t_city, t_industry) %>%
+  head() %>% knitr::kable()
+```
+
+Also this mission is present in the dataset!
+
+\pagebreak
+## E.2 Focus on Germany
+In total almost two million tons of bombs have been dropped here in over 55 thousand missions. Those are extremely large numbers. By the end of the war most German cities were devastated. An example is Kleve, just across the border of Groesbeek (although, these bombardments are not in the dataset).
+
+```{r}
+ops %>% filter(t_country == "GERMANY", str_detect(t_city, "KLE"))
+
+```
+
+![Aerial picture of kleve in ruins, 1944. Source: https://liberationroute.de](images\kleveunterstadt1944.jpg)
+
+I want to see if the bombardments on Germany changed during the war. Therefore, we will plot the number of missions per day against the total weight of bombs combined per day.
+
+```{r echo=FALSE, fig.height=3.5}
+# filter only bombardments on Germany
+ops %>% filter(t_country == "GERMANY") %>% group_by(date) %>% 
+  summarize(val = n(), size =sum(total_weight_tons)) %>%
+  # plot
+  ggplot(aes(date, val, size = size)) +
+  geom_point(shape =21, fill="deepskyblue3", alpha=0.3) +
+  labs(title = "Bombardments per day on Germany", x ="Year",
+       y = "Number of bombardments per day", size = "Total tons of bombs") +
+  geom_smooth(aes(color="red"), method = "gam",
+              formula = y ~ s(x, bs = "cs"), show.legend=FALSE) +
+  scale_colour_manual(name="legend", values="red") +
+  scale_size(breaks=c(10, 5000, 10000, 15000), labels=c("<10", "<5,000", "<10,000", "<15,000")) +
+  theme(legend.position = c(0.2, 0.7), plot.title = element_text(size=12))
+```
+
+This plot shows that towards the end of the war Germany was hit more and heavier. From history we know that this is due to the shrinking territory of the German empire and the shattering of the German air force. This allowed the Allied bombers to get further into German territory without encountering significant resistance.\newline
+So, if the frequency and size of the bombardments change over time, does that mean that the aircraft types also changed? Let us plot this for I am curious to see how many missions one type of plane executed per day throughout the years.
+
+```{r echo=FALSE}
+# breaks for logarithmic plots
+breaks <- 10^(-20:20)                                 
+minor_breaks <- rep(1:9, 41)*(10^rep(-20:20, each=9))
+
+# number of missions per day for each bomber per year
+# select top 10 aircrafts used in Germany
+n10_acs <- ops %>% mutate(year=year(date)) %>% group_by(ac_series) %>%
+  summarise(val = n()) %>% arrange(desc(val)) %>% top_n(10, val) %>% pull(ac_series)
+# filter data
+ops %>% filter(ac_series %in% n10_acs) %>%
+  filter(year(date) > 1939) %>% group_by(ac_series, date) %>% summarize(val=n()) %>%
+  # plot
+  ggplot(aes(x=reorder(ac_series, -val), y=val, fill=ac_series,)) +
+  geom_jitter(shape =21, alpha=0.2) +
+  geom_boxplot(alpha = 0.1, outlier.shape = NA) +
+  labs(title = "Missions per day to Germany for different aircraft series",
+       x = "Aircraft series", y = "Number of missions per day") +
+  theme(axis.text.x = element_text(angle =45, hjust=1), legend.position = 'none',
+        plot.title = element_text(size=12)) +
+  facet_wrap(~year(date), ncol=2)
+```
+
+Wow, the first thing I noticed is that there are two days in which around 400 missions were flown into Germany with the same type of plane! Something else we can make up out of this plot is that the type of aircraft changes trough time. In the first years of the war almost solely the WELL and HAMP aircrafts were used, but from 1943 the B17, B24 and B26 took over.
+
+There is one last thing I want to plot, which is the amount of bombs one aircraft type dropper on Germany per day.
+
+```{r echo=FALSE}
+ops %>% filter(ac_series %in% n10_acs) %>%
+  filter(year(date) > 1939) %>% group_by(ac_series, date) %>% summarize(val=sum(total_weight_tons)) %>%
+  # plot
+  ggplot(aes(x=reorder(ac_series, -val), y=val, fill=ac_series,)) +
+  geom_jitter(shape =21, alpha=0.2) +
+  geom_boxplot(alpha = 0.1, outlier.shape = NA) +
+  labs(title = "Tons of bombs dropped per day on Germany by different aircraft series",
+       x = "Aircraft series", y = "Tons of bombs dropped per day") +
+  theme(axis.text.x = element_text(angle =45, hjust=1), legend.position = 'none',
+        plot.title = element_text(size=12)) +
+  facet_wrap(~year(date), ncol=2)
+
+```
+
+Here we clearly see that the B17, B24, and "HVY" bombers are responsible for the majority of bombs dropped on Germany, with a maximum of almost 12,000 tons of bombs on one day by one type of aircraft.
